@@ -1,6 +1,6 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OutdirRequest {
+pub struct OutdirRequestProto {
     #[prost(string, tag = "1")]
     pub query: ::prost::alloc::string::String,
     #[prost(int32, tag = "2")]

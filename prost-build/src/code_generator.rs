@@ -1,24 +1,28 @@
-use std::ascii;
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::iter;
+use std::{
+    ascii,
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    iter,
+};
 
 use itertools::{Either, Itertools};
 use log::debug;
 use multimap::MultiMap;
-use prost_types::field_descriptor_proto::{Label, Type};
-use prost_types::source_code_info::Location;
 use prost_types::{
+    field_descriptor_proto::{Label, Type},
+    source_code_info::Location,
     DescriptorProto, EnumDescriptorProto, EnumValueDescriptorProto, FieldDescriptorProto,
     FieldOptions, FileDescriptorProto, OneofDescriptorProto, ServiceDescriptorProto,
     SourceCodeInfo,
 };
 
-use crate::ast::{Comments, Method, Service};
-use crate::extern_paths::ExternPaths;
-use crate::ident::{to_snake, to_upper_camel};
-use crate::message_graph::MessageGraph;
-use crate::{BytesType, Config, MapType};
+use crate::{
+    ast::{Comments, Method, Service},
+    extern_paths::ExternPaths,
+    ident::{to_snake, to_upper_camel},
+    message_graph::MessageGraph,
+    BytesType, Config, MapType,
+};
 
 #[derive(PartialEq)]
 enum Syntax {
@@ -119,9 +123,10 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn append_message(&mut self, message: DescriptorProto) {
-        debug!("  message: {:?}", message.name());
+        debug!("  message: {:?}Proto", message.name());
 
         let message_name = message.name().to_string();
+        let message_name_with_proto = format!("{}Proto", message.name());
         let fq_message_name = format!(
             "{}{}{}{}.{}",
             if self.package.is_empty() && self.type_path.is_empty() {
@@ -199,7 +204,7 @@ impl<'a> CodeGenerator<'a> {
         self.append_skip_debug(&fq_message_name);
         self.push_indent();
         self.buf.push_str("pub struct ");
-        self.buf.push_str(&to_upper_camel(&message_name));
+        self.buf.push_str(&to_upper_camel(&message_name_with_proto));
         self.buf.push_str(" {\n");
 
         self.depth += 1;
@@ -271,7 +276,7 @@ impl<'a> CodeGenerator<'a> {
         }
 
         if self.config.enable_type_names {
-            self.append_type_name(&message_name, &fq_message_name);
+            self.append_type_name(&message_name_with_proto, &fq_message_name);
         }
     }
 
@@ -559,7 +564,7 @@ impl<'a> CodeGenerator<'a> {
         fields: &[(FieldDescriptorProto, usize)],
     ) {
         let name = format!(
-            "{}::{}",
+            "{}::{}Proto",
             to_snake(message_name),
             to_upper_camel(oneof.name())
         );
@@ -573,7 +578,7 @@ impl<'a> CodeGenerator<'a> {
                 .map(|&(ref field, _)| field.number())
                 .join(", ")
         ));
-        self.append_field_attributes(fq_message_name, oneof.name());
+        self.append_field_attributes(fq_message_name, &format!("{}Proto", oneof.name()));
         self.push_indent();
         self.buf.push_str(&format!(
             "pub {}: ::core::option::Option<{}>,\n",
@@ -595,7 +600,8 @@ impl<'a> CodeGenerator<'a> {
         self.path.pop();
         self.path.pop();
 
-        let oneof_name = format!("{}.{}", fq_message_name, oneof.name());
+        let oneof_proto_name = &format!("{}Proto", oneof.name());
+        let oneof_name = format!("{}.{}", fq_message_name, oneof_proto_name);
         self.append_type_attributes(&oneof_name);
         self.append_enum_attributes(&oneof_name);
         self.push_indent();
@@ -608,16 +614,17 @@ impl<'a> CodeGenerator<'a> {
         self.append_skip_debug(&fq_message_name);
         self.push_indent();
         self.buf.push_str("pub enum ");
-        self.buf.push_str(&to_upper_camel(oneof.name()));
+        self.buf.push_str(&to_upper_camel(oneof_proto_name));
         self.buf.push_str(" {\n");
 
         self.path.push(2);
         self.depth += 1;
         for (field, idx) in fields {
+            let field_name = &format!("{}Proto", field.name());
             let type_ = field.r#type();
 
             self.path.push(idx as i32);
-            self.append_doc(fq_message_name, Some(field.name()));
+            self.append_doc(fq_message_name, Some(field_name));
             self.path.pop();
 
             self.push_indent();
@@ -627,7 +634,7 @@ impl<'a> CodeGenerator<'a> {
                 ty_tag,
                 field.number()
             ));
-            self.append_field_attributes(&oneof_name, field.name());
+            self.append_field_attributes(&oneof_name, field_name);
 
             self.push_indent();
             let ty = self.resolve_type(&field, fq_message_name);
@@ -639,25 +646,23 @@ impl<'a> CodeGenerator<'a> {
                 || (self
                     .config
                     .boxed
-                    .get_first_field(&oneof_name, field.name())
+                    .get_first_field(&oneof_name, field_name)
                     .is_some());
 
             debug!(
                 "    oneof: {:?}, type: {:?}, boxed: {}",
-                field.name(),
-                ty,
-                boxed
+                field_name, ty, boxed
             );
 
             if boxed {
                 self.buf.push_str(&format!(
                     "{}(::prost::alloc::boxed::Box<{}>),\n",
-                    to_upper_camel(field.name()),
+                    to_upper_camel(field_name),
                     ty
                 ));
             } else {
                 self.buf
-                    .push_str(&format!("{}({}),\n", to_upper_camel(field.name()), ty));
+                    .push_str(&format!("{}({}),\n", to_upper_camel(field_name), ty));
             }
         }
         self.depth -= 1;
@@ -696,7 +701,7 @@ impl<'a> CodeGenerator<'a> {
         debug!("  enum: {:?}", desc.name());
 
         let proto_enum_name = desc.name();
-        let enum_name = to_upper_camel(proto_enum_name);
+        let enum_name = format!("{}Proto", to_upper_camel(proto_enum_name));
 
         let enum_values = &desc.value;
         let fq_proto_enum_name = format!(
@@ -998,11 +1003,13 @@ impl<'a> CodeGenerator<'a> {
             ident_path.next();
         }
 
-        local_path
+        let res = local_path
             .map(|_| "super".to_string())
             .chain(ident_path.map(to_snake))
             .chain(iter::once(to_upper_camel(ident_type)))
-            .join("::")
+            .join("::");
+
+        format!("{}Proto", res)
     }
 
     fn field_type_tag(&self, field: &FieldDescriptorProto) -> Cow<'static, str> {
